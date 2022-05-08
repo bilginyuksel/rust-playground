@@ -101,18 +101,7 @@ struct GameObjects {
     objects: HashMap<Entity, Vec<Entity>>,
 }
 
-const FPS: f32 = 1.0;
-
-// TODO:
-//#[derive(Default)]
-//struct WorldPlugin;
-//
-//impl Plugin for WorldPlugin {
-//    fn build(&self, app: &mut App) {
-//        let world = &mut app.world;
-//        let s = world.query::<&Wall>();
-//    }
-//}
+const FPS: f32 = 0.3;
 
 fn main() {
     App::new()
@@ -124,14 +113,15 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_system_set(
             SystemSet::new()
-                .with_run_criteria(FixedTimestep::step(1. / 15.))
+                .with_run_criteria(FixedTimestep::step(1. / 20.))
                 .with_system(keyboard_events),
         )
         .add_system_set(
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(FPS as f64))
                 .with_system(check_for_collision)
-                .with_system(apply_gravity.before(check_for_collision)),
+                .with_system(apply_gravity.before(check_for_collision))
+                .with_system(check_explosion.after(check_for_collision)),
         )
         .run();
 }
@@ -460,12 +450,11 @@ fn keyboard_events(
     }
 }
 
-fn when_object_landed(
-    commands: &mut Commands,
-    block_query: Query<(Entity, &Transform, &Block), Without<Wall>>,
-    game_objects: &mut GameObjects,
-    gravity_entity: Entity,
-    gravity_transform: &Transform,
+fn check_explosion(
+    mut commands: Commands,
+    mut game_objects: ResMut<GameObjects>,
+    //mut query: Query<(&mut Transform, &Block)>,
+    block_query: Query<(Entity, &mut Transform, &Block), Without<Wall>>,
 ) {
     let mut entity_matrix: Vec<Vec<u32>> = vec![vec![u32::MAX; 11]; 22];
     let mut entity_map: HashMap<u32, Entity> = HashMap::new();
@@ -477,12 +466,6 @@ fn when_object_landed(
         entity_map.insert(id, entity);
         entity_matrix[y as usize][x as usize] = id;
     }
-
-    // Add new gravity entity to the map
-    let x = (gravity_transform.translation.x + 100.) / 20.;
-    let y = (gravity_transform.translation.y + 240.) / 20.;
-    entity_map.insert(gravity_entity.id(), gravity_entity);
-    entity_matrix[y as usize][x as usize] = gravity_entity.id();
 
     // Check rows to identify if any are full
     let mut target_rows_to_delete = Vec::new();
@@ -526,15 +509,12 @@ fn when_object_landed(
 
         resize_all_objects(entity_matrix, max_target_row, block_query);
     }
-
-    // resize every row above it
-    // call recursively
 }
 
 fn resize_all_objects(
     mut entity_matrix: Vec<Vec<u32>>,
     last_row: usize,
-    mut block_query: Query<(Entity, &Transform, &Block), Without<Wall>>,
+    mut query: Query<(Entity, &mut Transform, &Block), Without<Wall>>,
 ) {
     let mut resize_info_map: HashMap<u32, f32> = HashMap::new();
     for y in last_row..entity_matrix.len() {
@@ -551,9 +531,9 @@ fn resize_all_objects(
         }
     }
 
-    for (block_entity, mut block_transform, _) in block_query.iter_mut() {
+    for (block_entity, mut block_transform, _) in query.iter_mut() {
         if let Some(resize_info) = resize_info_map.get(&block_entity.id()) {
-            block_transform.translation.y -= *resize_info;
+            block_transform.translation.y -= resize_info;
         }
     }
 }
@@ -566,7 +546,6 @@ fn check_for_collision(
     mut game_objects: ResMut<GameObjects>,
     gravity_query: Query<(Entity, &Transform, &Gravity), With<Collider>>,
     block_query: Query<(Entity, &Transform, &Block), With<Collider>>,
-    without_wall_query: Query<(Entity, &Transform, &Block), Without<Wall>>,
 ) {
     for (gravity_entity, gravity_transform, _) in gravity_query.iter() {
         for (_, block_transform, _) in block_query.iter() {
@@ -589,13 +568,6 @@ fn check_for_collision(
                     Collision::Bottom => {
                         remove_related_entities(&mut commands, &mut game_objects, gravity_entity);
                         spawn_random_shape(&mut commands, &mut game_objects);
-                        when_object_landed(
-                            &mut commands,
-                            without_wall_query,
-                            &mut game_objects,
-                            gravity_entity,
-                            gravity_transform,
-                        );
                         return;
                     }
                     Collision::Left => {}
